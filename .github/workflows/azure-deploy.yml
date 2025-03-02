@@ -66,12 +66,6 @@ jobs:
             --resource-group powerop-ml-rg \
             --linux-fx-version "PYTHON|3.9" || true
 
-          echo "=== Setting always-on configuration ==="
-          az webapp config set \
-            --name powerop-app \
-            --resource-group powerop-ml-rg \
-            --always-on true || true
-
           echo "=== Setting basic app settings ==="
           az webapp config appsettings set \
             --name powerop-app \
@@ -79,7 +73,9 @@ jobs:
             --settings \
               WEBSITES_PORT=8000 \
               PYTHON_VERSION=3.9 \
-              SCM_DO_BUILD_DURING_DEPLOYMENT=true || true
+              SCM_DO_BUILD_DURING_DEPLOYMENT=true \
+              PYTHONPATH="/home/site/wwwroot" \
+              PATH="/usr/local/bin:/usr/bin:/bin:/home/site/wwwroot/.local/bin" || true
 
           echo "=== Setting deployment and startup settings ==="
           az webapp config appsettings set \
@@ -87,19 +83,19 @@ jobs:
             --resource-group powerop-ml-rg \
             --settings \
               WEBSITE_RUN_FROM_PACKAGE=1 \
-              STARTUP_COMMAND="gunicorn -c gunicorn_config.py api.main:app" || true
+              STARTUP_COMMAND="/home/site/wwwroot/.local/bin/gunicorn --chdir /home/site/wwwroot -c gunicorn_config.py api.main:app" || true
 
-          echo "=== Setting logging and cache settings ==="
+          echo "=== Setting logging settings ==="
           az webapp config appsettings set \
             --name powerop-app \
             --resource-group powerop-ml-rg \
             --settings \
               WEBSITE_HTTPLOGGING_RETENTION_DAYS=1 \
-              WEBSITE_LOCAL_CACHE_OPTION=Always || true
+              DIAGNOSTICS_AZUREBLOBCONTAINERSASURL="" \
+              DIAGNOSTICS_AZUREBLOBRETENTIONINDAYS=7 || true
 
           echo "=== Verifying configuration ==="
           az webapp config show --name powerop-app --resource-group powerop-ml-rg --query linuxFxVersion -o tsv
-          echo "Configuration completed"
 
       - name: Deploy to Azure Web App
         id: deploy
@@ -112,7 +108,11 @@ jobs:
         if: steps.deploy.outcome == 'success'
         run: |
           echo "=== Waiting for deployment to stabilize ==="
-          sleep 120  # Increased wait time to 2 minutes
+          sleep 30
+
+          echo "=== Restarting web app ==="
+          az webapp restart --name powerop-app --resource-group powerop-ml-rg
+          sleep 90  # Wait after restart
 
           echo "=== Checking web app status ==="
           STATUS=$(az webapp show --name powerop-app --resource-group powerop-ml-rg --query state -o tsv)
@@ -120,15 +120,12 @@ jobs:
 
           if [ "$STATUS" != "Running" ]; then
             echo "Web app is not in Running state"
-            az webapp log tail --name powerop-app --resource-group powerop-ml-rg
+            az webapp log show --name powerop-app --resource-group powerop-ml-rg
             exit 1
           fi
 
           echo "=== Checking application logs ==="
-          az webapp log tail --name powerop-app --resource-group powerop-ml-rg --filter Error &
-          LOG_PID=$!
-          sleep 10
-          kill $LOG_PID || true
+          az webapp log show --name powerop-app --resource-group powerop-ml-rg --tail 100
 
           echo "=== Testing application health endpoint ==="
           WEBAPP_URL=$(az webapp show --name powerop-app --resource-group powerop-ml-rg --query defaultHostName -o tsv)
@@ -139,13 +136,8 @@ jobs:
           while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
             echo "Attempt $((RETRY_COUNT+1))/$MAX_RETRIES"
             
-            # First, check if the app is still running
-            STATUS=$(az webapp show --name powerop-app --resource-group powerop-ml-rg --query state -o tsv)
-            if [ "$STATUS" != "Running" ]; then
-              echo "Web app is no longer running!"
-              az webapp log tail --name powerop-app --resource-group powerop-ml-rg
-              exit 1
-            fi
+            # Get latest logs
+            az webapp log show --name powerop-app --resource-group powerop-ml-rg --tail 50
 
             # Try the health check
             RESPONSE=$(curl -s -w "\n%{http_code}" "https://$WEBAPP_URL/health")
@@ -163,9 +155,9 @@ jobs:
             echo "Waiting ${WAIT_TIME} seconds before next attempt..."
             sleep $WAIT_TIME
             RETRY_COUNT=$((RETRY_COUNT+1))
-            WAIT_TIME=$((WAIT_TIME + 15))  # Increase wait time between retries
+            WAIT_TIME=$((WAIT_TIME + 15))
           done
 
-          echo "=== Deployment failed - Collecting logs ==="
-          az webapp log tail --name powerop-app --resource-group powerop-ml-rg
+          echo "=== Deployment failed - Final logs ==="
+          az webapp log show --name powerop-app --resource-group powerop-ml-rg
           exit 1
