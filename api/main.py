@@ -12,6 +12,9 @@ import traceback
 import asyncio
 import platform
 import socket
+import os
+import pkg_resources
+import time
 
 # Import auth module
 from .auth import create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES, oauth2_scheme
@@ -208,6 +211,41 @@ async def health_check():
 @app.get("/test")
 def test_endpoint():
     return {"status": "working"}
+
+# Enhanced logging setup
+@app.on_event("startup")
+async def startup_event():
+    """Log detailed information on startup"""
+    logger.info("=== Application Starting ===")
+    logger.info(f"Python Version: {platform.python_version()}")
+    logger.info(f"Platform: {platform.platform()}")
+    logger.info(f"Working Directory: {os.getcwd()}")
+    logger.info(f"Hostname: {socket.gethostname()}")
+    logger.info(f"IP Address: {socket.gethostbyname(socket.gethostname())}")
+    logger.info("Installed Packages:")
+    for pkg in pkg_resources.working_set:
+        logger.info(f"  {pkg.key} - Version {pkg.version}")
+    logger.info("=== Startup Complete ===")
+
+@app.middleware("http")
+async def logging_middleware(request: Request, call_next):
+    """Log detailed request information"""
+    start_time = time.time()
+    
+    logger.info(f"=== Request Start ===")
+    logger.info(f"Method: {request.method}")
+    logger.info(f"URL: {request.url}")
+    logger.info(f"Headers: {dict(request.headers)}")
+    logger.info(f"Client: {request.client}")
+    
+    response = await call_next(request)
+    
+    process_time = time.time() - start_time
+    logger.info(f"=== Request End ===")
+    logger.info(f"Status Code: {response.status_code}")
+    logger.info(f"Process Time: {process_time:.4f} seconds")
+    
+    return response
 
 if __name__ == "__main__":
     uvicorn.run(

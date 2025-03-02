@@ -7,7 +7,7 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 10 # Add overall job timeout
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v2
 
@@ -16,27 +16,47 @@ jobs:
         with:
           python-version: "3.9"
 
-      - name: Prepare smaller deployment package
+      - name: Create minimal package
         run: |
-          chmod +x startup.sh
-          # Create a minimal zip with only necessary files
-          zip deploy.zip \
-            startup.sh \
-            requirements.txt \
-            gunicorn_config.py \
-            runtime.txt \
-            -r api/
+          # Create a very minimal initial package
+          mkdir deploy
+          cp startup.sh deploy/
+          cp requirements.txt deploy/
+          cp gunicorn_config.py deploy/
+          cp runtime.txt deploy/
+          cp -r api deploy/
+          cd deploy
+          zip -r ../deploy.zip .
 
       - name: Login to Azure
         uses: azure/login@v1
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Stop Web App
+      - name: Clean up existing deployment
         run: |
+          echo "Stopping and cleaning web app..."
           az webapp stop --name powerop-app --resource-group powerop-ml-rg
+          az webapp config appsettings set \
+            --name powerop-app \
+            --resource-group powerop-ml-rg \
+            --settings WEBSITE_RUN_FROM_PACKAGE=
 
-      - name: Configure Web App
+      - name: Basic configuration
+        run: |
+          az webapp config set \
+            --name powerop-app \
+            --resource-group powerop-ml-rg \
+            --linux-fx-version "PYTHON|3.9" \
+            --startup-file "startup.sh"
+
+      - name: Initial deployment
+        uses: azure/webapps-deploy@v2
+        with:
+          app-name: powerop-app
+          package: deploy.zip
+
+      - name: Configure app settings
         run: |
           az webapp config appsettings set \
             --name powerop-app \
@@ -47,29 +67,41 @@ jobs:
               SCM_DO_BUILD_DURING_DEPLOYMENT=true \
               WEBSITE_RUN_FROM_PACKAGE=1
 
-      - name: Deploy to Azure Web App
-        uses: azure/webapps-deploy@v2
-        timeout-minutes: 5 # Add deployment step timeout
-        with:
-          app-name: powerop-app
-          package: deploy.zip
-
-      - name: Start Web App
+      - name: Start and verify
         run: |
+          echo "=== Starting Application ==="
           az webapp start --name powerop-app --resource-group powerop-ml-rg
 
-      - name: Quick status check
-        run: |
-          echo "Checking deployment status..."
-          for i in {1..5}; do
-            STATUS=$(az webapp show --name powerop-app --resource-group powerop-ml-rg --query state -o tsv)
-            echo "Attempt $i - Status: $STATUS"
-            if [ "$STATUS" = "Running" ]; then
-              echo "Application is running!"
-              exit 0
-            fi
-            sleep 10
-          done
-          echo "Deployment might have issues. Checking logs..."
-          az webapp log tail --name powerop-app --resource-group powerop-ml-rg --debug
-          exit 1
+          echo "=== Deployment Info ==="
+          az webapp show --name powerop-app --resource-group powerop-ml-rg
+
+          echo "=== Checking Configuration ==="
+          az webapp config show --name powerop-app --resource-group powerop-ml-rg
+
+          echo "=== Application Settings ==="
+          az webapp config appsettings list --name powerop-app --resource-group powerop-ml-rg
+
+          echo "=== Waiting for Startup ==="
+          sleep 45
+
+          echo "=== Container Logs ==="
+          az webapp log tail --name powerop-app --resource-group powerop-ml-rg --provider docker
+
+          echo "=== Application Logs ==="
+          az webapp log download --name powerop-app --resource-group powerop-ml-rg
+
+          echo "=== Deployment Logs ==="
+          az webapp deployment log tail --name powerop-app --resource-group powerop-ml-rg
+
+          echo "=== Health Check ==="
+          WEBAPP_URL=$(az webapp show --name powerop-app --resource-group powerop-ml-rg --query defaultHostName -o tsv)
+          curl -v "https://$WEBAPP_URL/health"
+
+          echo "=== Final Status Check ==="
+          STATUS=$(az webapp show --name powerop-app --resource-group powerop-ml-rg --query state -o tsv)
+          echo "Status: $STATUS"
+
+          if [ "$STATUS" != "Running" ]; then
+            echo "=== Error Logs ==="
+            az webapp log tail --name powerop-app --resource-group powerop-ml-rg --debug
+            exit 1
