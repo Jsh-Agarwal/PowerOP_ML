@@ -26,20 +26,22 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Set Web App Configurations
+      - name: Configure Python Runtime
         run: |
           az webapp config set \
             --name powerop-app \
             --resource-group powerop-ml-rg \
-            --linux-fx-version "PYTHON|3.9" \
-            --startup-command "gunicorn --bind=0.0.0.0 --timeout 600 api.main:app --workers 4"
+            --linux-fx-version "PYTHON|3.9"
 
+      - name: Configure App Settings
+        run: |
           az webapp config appsettings set \
             --name powerop-app \
             --resource-group powerop-ml-rg \
             --settings \
               SCM_DO_BUILD_DURING_DEPLOYMENT=true \
-              PYTHON_VERSION=3.9
+              PYTHON_VERSION=3.9 \
+              STARTUP_COMMAND="gunicorn --bind=0.0.0.0 --timeout 600 api.main:app --workers 4"
 
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v2
@@ -58,3 +60,4 @@ jobs:
             echo "Checking logs for errors..."
             az webapp log tail --name powerop-app --resource-group powerop-ml-rg
             exit 1
+          fi
