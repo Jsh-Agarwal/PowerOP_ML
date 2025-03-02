@@ -64,10 +64,9 @@ jobs:
           az webapp config set \
             --name powerop-app \
             --resource-group powerop-ml-rg \
-            --linux-fx-version "PYTHON|3.9" \
-            --startup-command "gunicorn -c gunicorn_config.py api.main:app"
+            --linux-fx-version "PYTHON|3.9"
 
-          # Configure app settings
+          # Configure app settings including startup command
           az webapp config appsettings set \
             --name powerop-app \
             --resource-group powerop-ml-rg \
@@ -75,7 +74,8 @@ jobs:
               WEBSITES_PORT=8000 \
               PYTHON_VERSION=3.9 \
               SCM_DO_BUILD_DURING_DEPLOYMENT=true \
-              WEBSITE_RUN_FROM_PACKAGE=1
+              WEBSITE_RUN_FROM_PACKAGE=1 \
+              STARTUP_COMMAND="gunicorn -c gunicorn_config.py api.main:app"
 
       - name: Deploy to Azure Web App
         id: deploy
