@@ -120,12 +120,18 @@ jobs:
 
           if [ "$STATUS" != "Running" ]; then
             echo "Web app is not in Running state"
-            az webapp log show --name powerop-app --resource-group powerop-ml-rg
+            az webapp log deployment show --name powerop-app --resource-group powerop-ml-rg
             exit 1
           fi
 
           echo "=== Checking application logs ==="
-          az webapp log show --name powerop-app --resource-group powerop-ml-rg --tail 100
+          # Enable logging
+          az webapp log config --name powerop-app --resource-group powerop-ml-rg --web-server-logging filesystem
+
+          # Download logs
+          az webapp log download --name powerop-app --resource-group powerop-ml-rg --log-file logs.zip
+          unzip -o logs.zip
+          cat LogFiles/application/*.log || true
 
           echo "=== Testing application health endpoint ==="
           WEBAPP_URL=$(az webapp show --name powerop-app --resource-group powerop-ml-rg --query defaultHostName -o tsv)
@@ -136,8 +142,8 @@ jobs:
           while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
             echo "Attempt $((RETRY_COUNT+1))/$MAX_RETRIES"
             
-            # Get latest logs
-            az webapp log show --name powerop-app --resource-group powerop-ml-rg --tail 50
+            # Get latest deployment logs
+            az webapp log deployment show --name powerop-app --resource-group powerop-ml-rg
 
             # Try the health check
             RESPONSE=$(curl -s -w "\n%{http_code}" "https://$WEBAPP_URL/health")
@@ -152,6 +158,12 @@ jobs:
               exit 0
             fi
 
+            # Download and show latest logs
+            az webapp log download --name powerop-app --resource-group powerop-ml-rg --log-file logs.zip
+            unzip -o logs.zip
+            echo "=== Latest application logs ==="
+            cat LogFiles/application/*.log || true
+
             echo "Waiting ${WAIT_TIME} seconds before next attempt..."
             sleep $WAIT_TIME
             RETRY_COUNT=$((RETRY_COUNT+1))
@@ -159,5 +171,6 @@ jobs:
           done
 
           echo "=== Deployment failed - Final logs ==="
-          az webapp log show --name powerop-app --resource-group powerop-ml-rg
+          az webapp log deployment show --name powerop-app --resource-group powerop-ml-rg
+          cat LogFiles/application/*.log || true
           exit 1
