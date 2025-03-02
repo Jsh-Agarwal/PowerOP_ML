@@ -19,6 +19,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          pip list
 
       - name: Login to Azure
         uses: azure/login@v1
@@ -28,5 +29,12 @@ jobs:
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v2
         with:
-          app-name: powerop-ml-app
-          package: .
+          app-name: powerop-app
+          resource-group: powerop-ml-rg
+          startup-command: "gunicorn --bind=0.0.0.0 --timeout 600 api.main:app --workers 4"
+
+      - name: Configure Web App Settings
+        run: |
+          az webapp config set --resource-group powerop-ml-rg --name powerop-app --linux-fx-version "PYTHON|3.9"
+          az webapp config appsettings set --resource-group powerop-ml-rg --name powerop-app --settings SCM_DO_BUILD_DURING_DEPLOYMENT=true
+          az webapp log config --resource-group powerop-ml-rg --name powerop-app --docker-container-logging filesystem

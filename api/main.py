@@ -10,6 +10,8 @@ import logging
 from fastapi.responses import JSONResponse
 import traceback
 import asyncio
+import platform
+import socket
 
 # Import auth module
 from .auth import create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES, oauth2_scheme
@@ -191,6 +193,21 @@ async def root():
         "status": "running",
         "docs_url": "/docs"
     }
+
+@app.get("/health", tags=["System"])
+async def health_check():
+    """Health check endpoint for Azure."""
+    return {
+        "status": "healthy",
+        "version": "1.0.0",
+        "python_version": platform.python_version(),
+        "hostname": socket.gethostname(),
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+@app.get("/test")
+def test_endpoint():
+    return {"status": "working"}
 
 if __name__ == "__main__":
     uvicorn.run(
