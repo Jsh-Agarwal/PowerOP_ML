@@ -1,0 +1,29 @@
+name: Azure Deployment
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy to Azure
+        uses: azure/webapps-deploy@v2
+        with:
+          app-name: powerop-ml-app
+          package: .
+
+      - name: Deploy ML Resources
+        uses: azure/cli@v1
+        with:
+          inlineScript: |
+            az ml workspace create --name powerop-ml-workspace
+            az ml compute create --name training-cluster

@@ -1,0 +1,67 @@
+# API Framework
+fastapi==0.104.1
+uvicorn==0.24.0
+starlette
+python-multipart==0.0.6
+pydantic==2.5.2
+
+# Machine Learning
+tensorflow==2.15.0
+numpy==1.26.2
+pandas==2.1.3
+scikit-learn==1.3.2
+joblib
+
+# Database
+cassandra-driver
+aiohttp==3.9.1
+python-dotenv
+
+# API Rate Limiting
+ratelimit
+cachetools
+
+# Testing
+pytest
+pytest-asyncio
+pytest-cov
+httpx
+pytest-mock
+locust
+
+# Real-time Processing
+websockets
+asyncio
+
+# Data Processing
+scipy
+plotly==5.18.0
+PyYAML
+matplotlib==3.8.2
+seaborn==0.13.0
+
+# Security
+python-jose==3.3.0
+passlib[bcrypt]
+python-multipart
+PyJWT  # Add this line for JWT support
+
+# Monitoring and Logging
+prometheus-client
+python-json-logger
+
+# Development Tools
+black  # Code formatting
+isort  # Import sorting
+flake8  # Linting
+mypy   # Type checking
+
+# Documentation
+mkdocs
+mkdocs-material
+
+tenacity
+
+astrapy
+
+backoff
