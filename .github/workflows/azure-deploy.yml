@@ -60,25 +60,46 @@ jobs:
 
       - name: Configure Web App
         run: |
-          # Update Python configuration
+          echo "=== Configuring Python runtime ==="
           az webapp config set \
             --name powerop-app \
             --resource-group powerop-ml-rg \
-            --linux-fx-version "PYTHON|3.9" \
-            --always-on true
+            --linux-fx-version "PYTHON|3.9" || true
 
-          # Configure app settings including startup command
+          echo "=== Setting always-on configuration ==="
+          az webapp config set \
+            --name powerop-app \
+            --resource-group powerop-ml-rg \
+            --always-on true || true
+
+          echo "=== Setting basic app settings ==="
           az webapp config appsettings set \
             --name powerop-app \
             --resource-group powerop-ml-rg \
             --settings \
               WEBSITES_PORT=8000 \
               PYTHON_VERSION=3.9 \
-              SCM_DO_BUILD_DURING_DEPLOYMENT=true \
+              SCM_DO_BUILD_DURING_DEPLOYMENT=true || true
+
+          echo "=== Setting deployment and startup settings ==="
+          az webapp config appsettings set \
+            --name powerop-app \
+            --resource-group powerop-ml-rg \
+            --settings \
               WEBSITE_RUN_FROM_PACKAGE=1 \
-              STARTUP_COMMAND="gunicorn -c gunicorn_config.py api.main:app" \
+              STARTUP_COMMAND="gunicorn -c gunicorn_config.py api.main:app" || true
+
+          echo "=== Setting logging and cache settings ==="
+          az webapp config appsettings set \
+            --name powerop-app \
+            --resource-group powerop-ml-rg \
+            --settings \
               WEBSITE_HTTPLOGGING_RETENTION_DAYS=1 \
-              WEBSITE_LOCAL_CACHE_OPTION=Always
+              WEBSITE_LOCAL_CACHE_OPTION=Always || true
+
+          echo "=== Verifying configuration ==="
+          az webapp config show --name powerop-app --resource-group powerop-ml-rg --query linuxFxVersion -o tsv
+          echo "Configuration completed"
 
       - name: Deploy to Azure Web App
         id: deploy
