@@ -15,11 +15,13 @@ jobs:
         with:
           python-version: "3.9"
 
-      - name: Create deployment package
+      - name: Prepare deployment
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          zip -r deployment.zip . -x "*.git*"
+          # Make startup script executable
+          chmod +x startup.sh
+
+          # Create deployment package
+          zip -r deploy.zip . -x "*.git*"
 
       - name: Login to Azure
         uses: azure/login@v1
@@ -28,37 +30,36 @@ jobs:
 
       - name: Configure Web App
         run: |
-          # Stop the web app
-          az webapp stop --name powerop-app --resource-group powerop-ml-rg
-
-          # Configure settings
-          az webapp config set \
-            --name powerop-app \
-            --resource-group powerop-ml-rg \
-            --linux-fx-version "PYTHON|3.9" \
-            --startup-file "startup.sh"
-
+          # Configure app settings first
           az webapp config appsettings set \
             --name powerop-app \
             --resource-group powerop-ml-rg \
             --settings \
               SCM_DO_BUILD_DURING_DEPLOYMENT=true \
+              WEBSITES_PORT=8000 \
               PYTHON_VERSION=3.9 \
-              PORT=8000
+              WEBSITE_RUN_FROM_PACKAGE=1
 
-          # Start the web app
-          az webapp start --name powerop-app --resource-group powerop-ml-rg
+          # Update Python configuration
+          az webapp config set \
+            --name powerop-app \
+            --resource-group powerop-ml-rg \
+            --linux-fx-version "PYTHON|3.9" \
+            --startup-command "/home/site/wwwroot/startup.sh"
 
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v2
         with:
           app-name: powerop-app
-          package: ./deployment.zip
+          package: deploy.zip
 
-      - name: Check deployment logs
-        if: always()
+      - name: Check deployment
         run: |
-          sleep 30
-          az webapp log download --name powerop-app --resource-group powerop-ml-rg
-          echo "Latest logs:"
+          echo "Waiting for deployment..."
+          sleep 45
+
+          echo "Getting application logs..."
+          az webapp log show --name powerop-app --resource-group powerop-ml-rg --query application
+
+          echo "Getting container logs..."
           az webapp log tail --name powerop-app --resource-group powerop-ml-rg
