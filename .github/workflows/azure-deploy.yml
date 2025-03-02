@@ -7,6 +7,7 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 10 # Add overall job timeout
     steps:
       - uses: actions/checkout@v2
 
@@ -15,48 +16,60 @@ jobs:
         with:
           python-version: "3.9"
 
-      - name: Prepare deployment
+      - name: Prepare smaller deployment package
         run: |
           chmod +x startup.sh
-          zip -r deploy.zip . -x "*.git*"
+          # Create a minimal zip with only necessary files
+          zip deploy.zip \
+            startup.sh \
+            requirements.txt \
+            gunicorn_config.py \
+            runtime.txt \
+            -r api/
 
       - name: Login to Azure
         uses: azure/login@v1
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
+      - name: Stop Web App
+        run: |
+          az webapp stop --name powerop-app --resource-group powerop-ml-rg
+
       - name: Configure Web App
         run: |
-          # Update Python configuration
-          az webapp config set \
-            --name powerop-app \
-            --resource-group powerop-ml-rg \
-            --linux-fx-version "PYTHON|3.9"
-
-          # Configure all app settings
           az webapp config appsettings set \
             --name powerop-app \
             --resource-group powerop-ml-rg \
             --settings \
-              SCM_DO_BUILD_DURING_DEPLOYMENT=true \
               WEBSITES_PORT=8000 \
               PYTHON_VERSION=3.9 \
-              WEBSITE_RUN_FROM_PACKAGE=1 \
-              STARTUP_COMMAND="/home/site/wwwroot/startup.sh"
+              SCM_DO_BUILD_DURING_DEPLOYMENT=true \
+              WEBSITE_RUN_FROM_PACKAGE=1
 
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v2
+        timeout-minutes: 5 # Add deployment step timeout
         with:
           app-name: powerop-app
           package: deploy.zip
 
-      - name: Check deployment
+      - name: Start Web App
         run: |
-          echo "Waiting for deployment..."
-          sleep 45
+          az webapp start --name powerop-app --resource-group powerop-ml-rg
 
-          echo "Getting application logs..."
-          az webapp log show --name powerop-app --resource-group powerop-ml-rg --query application
-
-          echo "Getting container logs..."
-          az webapp log tail --name powerop-app --resource-group powerop-ml-rg
+      - name: Quick status check
+        run: |
+          echo "Checking deployment status..."
+          for i in {1..5}; do
+            STATUS=$(az webapp show --name powerop-app --resource-group powerop-ml-rg --query state -o tsv)
+            echo "Attempt $i - Status: $STATUS"
+            if [ "$STATUS" = "Running" ]; then
+              echo "Application is running!"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Deployment might have issues. Checking logs..."
+          az webapp log tail --name powerop-app --resource-group powerop-ml-rg --debug
+          exit 1
