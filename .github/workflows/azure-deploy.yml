@@ -15,49 +15,50 @@ jobs:
         with:
           python-version: "3.9"
 
-      - name: Install dependencies
+      - name: Create deployment package
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip list
+          zip -r deployment.zip . -x "*.git*"
 
       - name: Login to Azure
         uses: azure/login@v1
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Configure Python Runtime
+      - name: Configure Web App
         run: |
+          # Stop the web app
+          az webapp stop --name powerop-app --resource-group powerop-ml-rg
+
+          # Configure settings
           az webapp config set \
             --name powerop-app \
             --resource-group powerop-ml-rg \
-            --linux-fx-version "PYTHON|3.9"
+            --linux-fx-version "PYTHON|3.9" \
+            --startup-file "startup.sh"
 
-      - name: Configure App Settings
-        run: |
           az webapp config appsettings set \
             --name powerop-app \
             --resource-group powerop-ml-rg \
             --settings \
               SCM_DO_BUILD_DURING_DEPLOYMENT=true \
               PYTHON_VERSION=3.9 \
-              STARTUP_COMMAND="gunicorn --bind=0.0.0.0 --timeout 600 api.main:app --workers 4"
+              PORT=8000
+
+          # Start the web app
+          az webapp start --name powerop-app --resource-group powerop-ml-rg
 
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v2
         with:
           app-name: powerop-app
-          package: .
+          package: ./deployment.zip
 
-      - name: Verify Deployment
+      - name: Check deployment logs
+        if: always()
         run: |
-          echo "Waiting for deployment to complete..."
           sleep 30
-          STATUS=$(az webapp show --name powerop-app --resource-group powerop-ml-rg --query state -o tsv)
-          echo "Web App Status: $STATUS"
-
-          if [ "$STATUS" != "Running" ]; then
-            echo "Checking logs for errors..."
-            az webapp log tail --name powerop-app --resource-group powerop-ml-rg
-            exit 1
-          fi
+          az webapp log download --name powerop-app --resource-group powerop-ml-rg
+          echo "Latest logs:"
+          az webapp log tail --name powerop-app --resource-group powerop-ml-rg

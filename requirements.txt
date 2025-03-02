@@ -1,10 +1,10 @@
 # API Framework
-fastapi==0.68.0
-uvicorn==0.15.0
+fastapi
+uvicorn
 starlette
-python-multipart==0.0.5
+python-multipart
 pydantic
-gunicorn==20.1.0
+gunicorn
 
 # Machine Learning
 tensorflow
@@ -15,8 +15,8 @@ joblib
 
 # Database
 cassandra-driver
-aiohttp==3.9.1
-python-dotenv==0.19.0
+aiohttp
+python-dotenv
 
 # API Rate Limiting
 ratelimit
@@ -36,33 +36,31 @@ asyncio
 
 # Data Processing
 scipy
-plotly==5.18.0
+plotly
 PyYAML
-matplotlib==3.8.2
-seaborn==0.13.0
+matplotlib
+seaborn
 
 # Security
-python-jose==3.3.0
+python-jose
 passlib[bcrypt]
 python-multipart
-PyJWT  # Add this line for JWT support
+PyJWT
 
 # Monitoring and Logging
 prometheus-client
 python-json-logger
 
 # Development Tools
-black  # Code formatting
-isort  # Import sorting
-flake8  # Linting
-mypy   # Type checking
+black
+isort
+flake8
+mypy
 
 # Documentation
 mkdocs
 mkdocs-material
 
 tenacity
-
 astrapy
-
 backoff
