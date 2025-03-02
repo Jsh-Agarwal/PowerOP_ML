@@ -26,15 +26,35 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
+      - name: Set Web App Configurations
+        run: |
+          az webapp config set \
+            --name powerop-app \
+            --resource-group powerop-ml-rg \
+            --linux-fx-version "PYTHON|3.9" \
+            --startup-command "gunicorn --bind=0.0.0.0 --timeout 600 api.main:app --workers 4"
+
+          az webapp config appsettings set \
+            --name powerop-app \
+            --resource-group powerop-ml-rg \
+            --settings \
+              SCM_DO_BUILD_DURING_DEPLOYMENT=true \
+              PYTHON_VERSION=3.9
+
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v2
         with:
           app-name: powerop-app
-          resource-group: powerop-ml-rg
-          startup-command: "gunicorn --bind=0.0.0.0 --timeout 600 api.main:app --workers 4"
+          package: .
 
-      - name: Configure Web App Settings
+      - name: Verify Deployment
         run: |
-          az webapp config set --resource-group powerop-ml-rg --name powerop-app --linux-fx-version "PYTHON|3.9"
-          az webapp config appsettings set --resource-group powerop-ml-rg --name powerop-app --settings SCM_DO_BUILD_DURING_DEPLOYMENT=true
-          az webapp log config --resource-group powerop-ml-rg --name powerop-app --docker-container-logging filesystem
+          echo "Waiting for deployment to complete..."
+          sleep 30
+          STATUS=$(az webapp show --name powerop-app --resource-group powerop-ml-rg --query state -o tsv)
+          echo "Web App Status: $STATUS"
+
+          if [ "$STATUS" != "Running" ]; then
+            echo "Checking logs for errors..."
+            az webapp log tail --name powerop-app --resource-group powerop-ml-rg
+            exit 1
