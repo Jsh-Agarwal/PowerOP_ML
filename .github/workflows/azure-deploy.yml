@@ -60,13 +60,14 @@ jobs:
 
       - name: Configure Web App
         run: |
-          # Update Python configuration
+          echo "=== Configuring Python runtime ==="
           az webapp config set \
             --name powerop-app \
             --resource-group powerop-ml-rg \
-            --linux-fx-version "PYTHON|3.9" || true
+            --linux-fx-version "PYTHON|3.9" \
+            --always-on true || true
 
-          # Configure app settings
+          echo "=== Setting app settings ==="
           az webapp config appsettings set \
             --name powerop-app \
             --resource-group powerop-ml-rg \
@@ -75,14 +76,10 @@ jobs:
               PYTHON_VERSION=3.9 \
               SCM_DO_BUILD_DURING_DEPLOYMENT=true \
               ENABLE_ORYX_BUILD=true \
-              STARTUP_COMMAND="pip install -r requirements.txt && gunicorn -c gunicorn_config.py api.main:app" || true
-
-          echo "=== Enabling logging ==="
-          az webapp log config \
-            --name powerop-app \
-            --resource-group powerop-ml-rg \
-            --docker-container-logging filesystem \
-            --level information
+              WEBSITE_RUN_FROM_PACKAGE=0 \
+              POST_BUILD_COMMAND="pip install --upgrade pip && pip install -r requirements.txt" \
+              PYTHONPATH="/home/site/wwwroot" \
+              STARTUP_COMMAND="cd /home/site/wwwroot && gunicorn --bind=0.0.0.0:8000 --timeout 600 api.main:app"
 
       - name: Deploy to Azure Web App
         id: deploy
@@ -94,20 +91,16 @@ jobs:
       - name: Deployment verification
         if: steps.deploy.outcome == 'success'
         run: |
-          echo "=== Waiting for deployment to stabilize ==="
-          sleep 60
-
-          echo "=== Getting deployment status ==="
-          DEPLOY_STATUS=$(az webapp deployment container show --name powerop-app --resource-group powerop-ml-rg --query properties.status -o tsv || echo "Unknown")
-          echo "Deployment status: $DEPLOY_STATUS"
+          echo "=== Waiting for build and startup ==="
+          sleep 120  # Wait longer for build to complete
 
           echo "=== Checking web app status ==="
           STATUS=$(az webapp show --name powerop-app --resource-group powerop-ml-rg --query state -o tsv)
           echo "Web app status: $STATUS"
 
           if [ "$STATUS" != "Running" ]; then
-            echo "=== Web app is not running - Checking deployment logs ==="
-            az webapp log deployment show --name powerop-app --resource-group powerop-ml-rg || true
+            echo "=== Web app is not running - Checking logs ==="
+            az webapp log tail --name powerop-app --resource-group powerop-ml-rg
             exit 1
           fi
 
@@ -120,9 +113,8 @@ jobs:
           while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
             echo "Attempt $((RETRY_COUNT+1))/$MAX_RETRIES"
             
-            # Show recent deployment logs
-            echo "=== Recent deployment logs ==="
-            az webapp log deployment show --name powerop-app --resource-group powerop-ml-rg || true
+            echo "=== Checking application logs ==="
+            az webapp log tail --name powerop-app --resource-group powerop-ml-rg --filter Error || true
 
             # Try the health check
             RESPONSE=$(curl -s -w "\n%{http_code}" "https://$WEBAPP_URL/health")
@@ -142,8 +134,6 @@ jobs:
             RETRY_COUNT=$((RETRY_COUNT+1))
           done
 
-          echo "=== Deployment failed - Final status ==="
-          az webapp show --name powerop-app --resource-group powerop-ml-rg --query state -o tsv
-          echo "=== Final deployment logs ==="
-          az webapp log deployment show --name powerop-app --resource-group powerop-ml-rg || true
+          echo "=== Deployment failed - Checking logs ==="
+          az webapp log tail --name powerop-app --resource-group powerop-ml-rg
           exit 1
