@@ -98,7 +98,7 @@ jobs:
           sleep 60
 
           echo "=== Getting deployment status ==="
-          DEPLOY_STATUS=$(az webapp deployment list --name powerop-app --resource-group powerop-ml-rg --query "[0].status" -o tsv)
+          DEPLOY_STATUS=$(az webapp deployment container show --name powerop-app --resource-group powerop-ml-rg --query properties.status -o tsv || echo "Unknown")
           echo "Deployment status: $DEPLOY_STATUS"
 
           echo "=== Checking web app status ==="
@@ -106,8 +106,8 @@ jobs:
           echo "Web app status: $STATUS"
 
           if [ "$STATUS" != "Running" ]; then
-            echo "=== Web app is not running - Checking logs ==="
-            az webapp log deployment show --name powerop-app --resource-group powerop-ml-rg
+            echo "=== Web app is not running - Checking deployment logs ==="
+            az webapp log deployment show --name powerop-app --resource-group powerop-ml-rg || true
             exit 1
           fi
 
@@ -120,7 +120,8 @@ jobs:
           while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
             echo "Attempt $((RETRY_COUNT+1))/$MAX_RETRIES"
             
-            # Check deployment status
+            # Show recent deployment logs
+            echo "=== Recent deployment logs ==="
             az webapp log deployment show --name powerop-app --resource-group powerop-ml-rg || true
 
             # Try the health check
@@ -141,6 +142,8 @@ jobs:
             RETRY_COUNT=$((RETRY_COUNT+1))
           done
 
-          echo "=== Deployment failed - Checking final status ==="
-          az webapp log deployment show --name powerop-app --resource-group powerop-ml-rg
+          echo "=== Deployment failed - Final status ==="
+          az webapp show --name powerop-app --resource-group powerop-ml-rg --query state -o tsv
+          echo "=== Final deployment logs ==="
+          az webapp log deployment show --name powerop-app --resource-group powerop-ml-rg || true
           exit 1
