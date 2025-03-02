@@ -77,9 +77,9 @@ jobs:
               SCM_DO_BUILD_DURING_DEPLOYMENT=true \
               ENABLE_ORYX_BUILD=true \
               WEBSITE_RUN_FROM_PACKAGE=0 \
-              POST_BUILD_COMMAND="pip install --upgrade pip && pip install -r requirements.txt" \
+              POST_BUILD_COMMAND="python -V && pip install --upgrade pip && pip install -r requirements.txt" \
               PYTHONPATH="/home/site/wwwroot" \
-              STARTUP_COMMAND="cd /home/site/wwwroot && gunicorn --bind=0.0.0.0:8000 --timeout 600 api.main:app"
+              STARTUP_COMMAND="cd /home/site/wwwroot && python -V && which python && gunicorn --bind=0.0.0.0:8000 --timeout 600 --log-level debug --error-logfile - --access-logfile - api.main:app"
 
       - name: Deploy to Azure Web App
         id: deploy
@@ -114,7 +114,10 @@ jobs:
             echo "Attempt $((RETRY_COUNT+1))/$MAX_RETRIES"
             
             echo "=== Checking application logs ==="
-            az webapp log tail --name powerop-app --resource-group powerop-ml-rg --filter Error || true
+            az webapp log tail --name powerop-app --resource-group powerop-ml-rg || true
+            
+            echo "=== Checking container logs ==="
+            az webapp log container --name powerop-app --resource-group powerop-ml-rg || true
 
             # Try the health check
             RESPONSE=$(curl -s -w "\n%{http_code}" "https://$WEBAPP_URL/health")
@@ -134,6 +137,9 @@ jobs:
             RETRY_COUNT=$((RETRY_COUNT+1))
           done
 
-          echo "=== Deployment failed - Checking logs ==="
-          az webapp log tail --name powerop-app --resource-group powerop-ml-rg
+          echo "=== Deployment failed - Final logs ==="
+          echo "Application logs:"
+          az webapp log tail --name powerop-app --resource-group powerop-ml-rg || true
+          echo "Container logs:"
+          az webapp log container --name powerop-app --resource-group powerop-ml-rg || true
           exit 1
