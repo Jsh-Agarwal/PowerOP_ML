@@ -17,10 +17,7 @@ jobs:
 
       - name: Prepare deployment
         run: |
-          # Make startup script executable
           chmod +x startup.sh
-
-          # Create deployment package
           zip -r deploy.zip . -x "*.git*"
 
       - name: Login to Azure
@@ -30,7 +27,13 @@ jobs:
 
       - name: Configure Web App
         run: |
-          # Configure app settings first
+          # Update Python configuration
+          az webapp config set \
+            --name powerop-app \
+            --resource-group powerop-ml-rg \
+            --linux-fx-version "PYTHON|3.9"
+
+          # Configure all app settings
           az webapp config appsettings set \
             --name powerop-app \
             --resource-group powerop-ml-rg \
@@ -38,14 +41,8 @@ jobs:
               SCM_DO_BUILD_DURING_DEPLOYMENT=true \
               WEBSITES_PORT=8000 \
               PYTHON_VERSION=3.9 \
-              WEBSITE_RUN_FROM_PACKAGE=1
-
-          # Update Python configuration
-          az webapp config set \
-            --name powerop-app \
-            --resource-group powerop-ml-rg \
-            --linux-fx-version "PYTHON|3.9" \
-            --startup-command "/home/site/wwwroot/startup.sh"
+              WEBSITE_RUN_FROM_PACKAGE=1 \
+              STARTUP_COMMAND="/home/site/wwwroot/startup.sh"
 
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v2
