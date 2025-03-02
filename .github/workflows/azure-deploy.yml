@@ -18,40 +18,19 @@ jobs:
 
       - name: Create deployment package
         run: |
-          echo "=== Verifying files before packaging ==="
-          echo "Current directory: $(pwd)"
-          echo "Directory contents:"
-          ls -la
-
           echo "=== Creating deployment directory ==="
           mkdir -p deploy
 
           echo "=== Copying files ==="
           # Essential files
-          cp -v startup.sh deploy/
           cp -v requirements.txt deploy/
           cp -v gunicorn_config.py deploy/
-          cp -v runtime.txt deploy/
-          cp -v .deployment deploy/
-
-          echo "=== Copying API directory ==="
           cp -rv api deploy/
-
-          echo "=== Verifying deployment directory ==="
-          echo "Deployment directory contents:"
-          ls -la deploy/
-          echo "API directory contents:"
-          ls -la deploy/api/
 
           echo "=== Creating ZIP archive ==="
           cd deploy
           zip -r ../deploy.zip .
           cd ..
-
-          echo "=== Final package verification ==="
-          echo "ZIP file size: $(ls -lh deploy.zip)"
-          echo "ZIP contents:"
-          unzip -l deploy.zip
 
       - name: Login to Azure
         uses: azure/login@v1
@@ -76,10 +55,11 @@ jobs:
               PYTHON_VERSION=3.9 \
               SCM_DO_BUILD_DURING_DEPLOYMENT=true \
               ENABLE_ORYX_BUILD=true \
+              BUILD_FLAGS="--no-venv" \
               WEBSITE_RUN_FROM_PACKAGE=0 \
-              POST_BUILD_COMMAND="python -V && pip install --upgrade pip && pip install -r requirements.txt" \
               PYTHONPATH="/home/site/wwwroot" \
-              STARTUP_COMMAND="cd /home/site/wwwroot && python -V && which python && gunicorn --bind=0.0.0.0:8000 --timeout 600 --log-level debug --error-logfile - --access-logfile - api.main:app"
+              POST_BUILD_COMMAND="pip install -r requirements.txt" \
+              STARTUP_COMMAND="cd /home/site/wwwroot && gunicorn --bind=0.0.0.0:8000 --timeout 600 --log-level debug --error-logfile /dev/stdout --access-logfile /dev/stdout api.main:app"
 
       - name: Deploy to Azure Web App
         id: deploy
@@ -92,20 +72,25 @@ jobs:
         if: steps.deploy.outcome == 'success'
         run: |
           echo "=== Waiting for build and startup ==="
-          sleep 120  # Wait longer for build to complete
+          sleep 90
+
+          echo "=== Getting deployment logs ==="
+          az webapp log deployment show \
+            --name powerop-app \
+            --resource-group powerop-ml-rg || true
 
           echo "=== Checking web app status ==="
-          STATUS=$(az webapp show --name powerop-app --resource-group powerop-ml-rg --query state -o tsv)
+          STATUS=$(az webapp show \
+            --name powerop-app \
+            --resource-group powerop-ml-rg \
+            --query state -o tsv)
           echo "Web app status: $STATUS"
 
-          if [ "$STATUS" != "Running" ]; then
-            echo "=== Web app is not running - Checking logs ==="
-            az webapp log tail --name powerop-app --resource-group powerop-ml-rg
-            exit 1
-          fi
-
           echo "=== Testing application health endpoint ==="
-          WEBAPP_URL=$(az webapp show --name powerop-app --resource-group powerop-ml-rg --query defaultHostName -o tsv)
+          WEBAPP_URL=$(az webapp show \
+            --name powerop-app \
+            --resource-group powerop-ml-rg \
+            --query defaultHostName -o tsv)
           MAX_RETRIES=5
           RETRY_COUNT=0
           WAIT_TIME=30
@@ -113,11 +98,10 @@ jobs:
           while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
             echo "Attempt $((RETRY_COUNT+1))/$MAX_RETRIES"
             
-            echo "=== Checking application logs ==="
-            az webapp log tail --name powerop-app --resource-group powerop-ml-rg || true
-            
-            echo "=== Checking container logs ==="
-            az webapp log container --name powerop-app --resource-group powerop-ml-rg || true
+            echo "=== Container logs ==="
+            az webapp log container \
+              --name powerop-app \
+              --resource-group powerop-ml-rg || true
 
             # Try the health check
             RESPONSE=$(curl -s -w "\n%{http_code}" "https://$WEBAPP_URL/health")
@@ -137,9 +121,8 @@ jobs:
             RETRY_COUNT=$((RETRY_COUNT+1))
           done
 
-          echo "=== Deployment failed - Final logs ==="
-          echo "Application logs:"
-          az webapp log tail --name powerop-app --resource-group powerop-ml-rg || true
-          echo "Container logs:"
-          az webapp log container --name powerop-app --resource-group powerop-ml-rg || true
+          echo "=== Deployment failed - Final status ==="
+          az webapp log container \
+            --name powerop-app \
+            --resource-group powerop-ml-rg || true
           exit 1
