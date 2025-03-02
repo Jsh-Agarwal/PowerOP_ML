@@ -18,19 +18,22 @@ jobs:
 
       - name: Create deployment package
         run: |
+          echo "=== Preparing deployment files ==="
+          # Create build script
+          echo "pip install --upgrade pip" > build.sh
+          echo "pip install -r requirements.txt" >> build.sh
+          chmod +x build.sh
+
           echo "=== Creating deployment directory ==="
           mkdir -p deploy
-
-          echo "=== Copying files ==="
-          # Essential files
           cp -v requirements.txt deploy/
           cp -v gunicorn_config.py deploy/
+          cp -v build.sh deploy/
           cp -rv api deploy/
 
-          echo "=== Creating ZIP archive ==="
-          cd deploy
-          zip -r ../deploy.zip .
-          cd ..
+          # Create run script
+          echo "gunicorn --bind=0.0.0.0:8000 --timeout 600 --log-level debug api.main:app" > deploy/run.sh
+          chmod +x deploy/run.sh
 
       - name: Login to Azure
         uses: azure/login@v1
@@ -52,32 +55,40 @@ jobs:
             --resource-group powerop-ml-rg \
             --settings \
               WEBSITES_PORT=8000 \
-              PYTHON_VERSION=3.9 \
               SCM_DO_BUILD_DURING_DEPLOYMENT=true \
               ENABLE_ORYX_BUILD=true \
-              BUILD_FLAGS="--no-venv" \
-              WEBSITE_RUN_FROM_PACKAGE=0 \
+              WEBSITE_RUN_FROM_PACKAGE=false \
               PYTHONPATH="/home/site/wwwroot" \
-              POST_BUILD_COMMAND="pip install -r requirements.txt" \
-              STARTUP_COMMAND="cd /home/site/wwwroot && gunicorn --bind=0.0.0.0:8000 --timeout 600 --log-level debug --error-logfile /dev/stdout --access-logfile /dev/stdout api.main:app"
+              COMMAND="./run.sh"
+
+          echo "=== Configuring deployment source ==="
+          az webapp deployment source config-local-git \
+            --name powerop-app \
+            --resource-group powerop-ml-rg
+
+      - name: Get publish profile
+        id: get-profile
+        run: |
+          profile=$(az webapp deployment list-publishing-profiles \
+            --name powerop-app \
+            --resource-group powerop-ml-rg \
+            --xml)
+          echo "::add-mask::$profile"
+          echo "PROFILE=$profile" >> $GITHUB_OUTPUT
 
       - name: Deploy to Azure Web App
         id: deploy
         uses: azure/webapps-deploy@v2
         with:
           app-name: powerop-app
-          package: deploy.zip
+          publish-profile: ${{ steps.get-profile.outputs.PROFILE }}
+          package: deploy
 
       - name: Deployment verification
         if: steps.deploy.outcome == 'success'
         run: |
           echo "=== Waiting for build and startup ==="
-          sleep 90
-
-          echo "=== Getting deployment logs ==="
-          az webapp log deployment show \
-            --name powerop-app \
-            --resource-group powerop-ml-rg || true
+          sleep 60
 
           echo "=== Checking web app status ==="
           STATUS=$(az webapp show \
@@ -86,42 +97,37 @@ jobs:
             --query state -o tsv)
           echo "Web app status: $STATUS"
 
+          if [ "$STATUS" != "Running" ]; then
+            echo "=== Web app is not running - Checking logs ==="
+            az webapp log container \
+              --name powerop-app \
+              --resource-group powerop-ml-rg || true
+            exit 1
+          fi
+
           echo "=== Testing application health endpoint ==="
           WEBAPP_URL=$(az webapp show \
             --name powerop-app \
             --resource-group powerop-ml-rg \
             --query defaultHostName -o tsv)
-          MAX_RETRIES=5
-          RETRY_COUNT=0
-          WAIT_TIME=30
 
-          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-            echo "Attempt $((RETRY_COUNT+1))/$MAX_RETRIES"
-            
+          for i in {1..5}; do
+            echo "Attempt $i/5"
             echo "=== Container logs ==="
             az webapp log container \
               --name powerop-app \
               --resource-group powerop-ml-rg || true
 
-            # Try the health check
-            RESPONSE=$(curl -s -w "\n%{http_code}" "https://$WEBAPP_URL/health")
-            HTTP_BODY=$(echo "$RESPONSE" | head -n 1)
-            HTTP_STATUS=$(echo "$RESPONSE" | tail -n 1)
-            
-            echo "Response body: $HTTP_BODY"
-            echo "Status code: $HTTP_STATUS"
-
-            if [ "$HTTP_STATUS" = "200" ]; then
+            if curl -s "https://$WEBAPP_URL/health" | grep -q "ok"; then
               echo "Health check successful!"
               exit 0
             fi
-
-            echo "Waiting ${WAIT_TIME} seconds before next attempt..."
-            sleep $WAIT_TIME
-            RETRY_COUNT=$((RETRY_COUNT+1))
+            
+            echo "Waiting 30 seconds..."
+            sleep 30
           done
 
-          echo "=== Deployment failed - Final status ==="
+          echo "=== Deployment failed - Final logs ==="
           az webapp log container \
             --name powerop-app \
             --resource-group powerop-ml-rg || true
