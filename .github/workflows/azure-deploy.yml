@@ -64,7 +64,8 @@ jobs:
           az webapp config set \
             --name powerop-app \
             --resource-group powerop-ml-rg \
-            --linux-fx-version "PYTHON|3.9"
+            --linux-fx-version "PYTHON|3.9" \
+            --startup-command "gunicorn -c gunicorn_config.py api.main:app"
 
           # Configure app settings
           az webapp config appsettings set \
@@ -77,25 +78,42 @@ jobs:
               WEBSITE_RUN_FROM_PACKAGE=1
 
       - name: Deploy to Azure Web App
+        id: deploy
         uses: azure/webapps-deploy@v2
         with:
           app-name: powerop-app
           package: deploy.zip
-          clean: true
-          restart: true
 
       - name: Deployment verification
+        if: steps.deploy.outcome == 'success'
         run: |
-          echo "=== Waiting for deployment ==="
-          sleep 30
+          echo "=== Waiting for deployment to stabilize ==="
+          sleep 60  # Increased wait time
 
-          echo "=== Checking deployment status ==="
-          DEPLOYMENT_STATUS=$(az webapp deployment list --name powerop-app --resource-group powerop-ml-rg --query "[0].status" -o tsv)
-          echo "Deployment status: $DEPLOYMENT_STATUS"
+          echo "=== Checking web app status ==="
+          STATUS=$(az webapp show --name powerop-app --resource-group powerop-ml-rg --query state -o tsv)
+          echo "Web app status: $STATUS"
 
-          echo "=== Checking application logs ==="
-          az webapp log tail --name powerop-app --resource-group powerop-ml-rg
+          if [ "$STATUS" != "Running" ]; then
+            echo "Web app is not in Running state"
+            exit 1
+          fi
 
-          echo "=== Testing application ==="
+          echo "=== Testing application health endpoint ==="
           WEBAPP_URL=$(az webapp show --name powerop-app --resource-group powerop-ml-rg --query defaultHostName -o tsv)
-          curl -v "https://$WEBAPP_URL/health" || true
+          MAX_RETRIES=5
+          RETRY_COUNT=0
+
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://$WEBAPP_URL/health")
+            if [ "$HTTP_STATUS" = "200" ]; then
+              echo "Health check successful!"
+              exit 0
+            fi
+            echo "Attempt $((RETRY_COUNT+1))/$MAX_RETRIES: Health check returned $HTTP_STATUS"
+            RETRY_COUNT=$((RETRY_COUNT+1))
+            sleep 30
+          done
+
+          echo "Health check failed after $MAX_RETRIES attempts"
+          exit 1
