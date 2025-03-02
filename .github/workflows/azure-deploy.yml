@@ -64,7 +64,8 @@ jobs:
           az webapp config set \
             --name powerop-app \
             --resource-group powerop-ml-rg \
-            --linux-fx-version "PYTHON|3.9"
+            --linux-fx-version "PYTHON|3.9" \
+            --always-on true
 
           # Configure app settings including startup command
           az webapp config appsettings set \
@@ -75,7 +76,9 @@ jobs:
               PYTHON_VERSION=3.9 \
               SCM_DO_BUILD_DURING_DEPLOYMENT=true \
               WEBSITE_RUN_FROM_PACKAGE=1 \
-              STARTUP_COMMAND="gunicorn -c gunicorn_config.py api.main:app"
+              STARTUP_COMMAND="gunicorn -c gunicorn_config.py api.main:app" \
+              WEBSITE_HTTPLOGGING_RETENTION_DAYS=1 \
+              WEBSITE_LOCAL_CACHE_OPTION=Always
 
       - name: Deploy to Azure Web App
         id: deploy
@@ -88,7 +91,7 @@ jobs:
         if: steps.deploy.outcome == 'success'
         run: |
           echo "=== Waiting for deployment to stabilize ==="
-          sleep 60  # Increased wait time
+          sleep 120  # Increased wait time to 2 minutes
 
           echo "=== Checking web app status ==="
           STATUS=$(az webapp show --name powerop-app --resource-group powerop-ml-rg --query state -o tsv)
@@ -96,24 +99,52 @@ jobs:
 
           if [ "$STATUS" != "Running" ]; then
             echo "Web app is not in Running state"
+            az webapp log tail --name powerop-app --resource-group powerop-ml-rg
             exit 1
           fi
 
+          echo "=== Checking application logs ==="
+          az webapp log tail --name powerop-app --resource-group powerop-ml-rg --filter Error &
+          LOG_PID=$!
+          sleep 10
+          kill $LOG_PID || true
+
           echo "=== Testing application health endpoint ==="
           WEBAPP_URL=$(az webapp show --name powerop-app --resource-group powerop-ml-rg --query defaultHostName -o tsv)
-          MAX_RETRIES=5
+          MAX_RETRIES=8
           RETRY_COUNT=0
+          WAIT_TIME=30
 
           while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://$WEBAPP_URL/health")
+            echo "Attempt $((RETRY_COUNT+1))/$MAX_RETRIES"
+            
+            # First, check if the app is still running
+            STATUS=$(az webapp show --name powerop-app --resource-group powerop-ml-rg --query state -o tsv)
+            if [ "$STATUS" != "Running" ]; then
+              echo "Web app is no longer running!"
+              az webapp log tail --name powerop-app --resource-group powerop-ml-rg
+              exit 1
+            fi
+
+            # Try the health check
+            RESPONSE=$(curl -s -w "\n%{http_code}" "https://$WEBAPP_URL/health")
+            HTTP_BODY=$(echo "$RESPONSE" | head -n 1)
+            HTTP_STATUS=$(echo "$RESPONSE" | tail -n 1)
+            
+            echo "Response body: $HTTP_BODY"
+            echo "Status code: $HTTP_STATUS"
+
             if [ "$HTTP_STATUS" = "200" ]; then
               echo "Health check successful!"
               exit 0
             fi
-            echo "Attempt $((RETRY_COUNT+1))/$MAX_RETRIES: Health check returned $HTTP_STATUS"
+
+            echo "Waiting ${WAIT_TIME} seconds before next attempt..."
+            sleep $WAIT_TIME
             RETRY_COUNT=$((RETRY_COUNT+1))
-            sleep 30
+            WAIT_TIME=$((WAIT_TIME + 15))  # Increase wait time between retries
           done
 
-          echo "Health check failed after $MAX_RETRIES attempts"
+          echo "=== Deployment failed - Collecting logs ==="
+          az webapp log tail --name powerop-app --resource-group powerop-ml-rg
           exit 1
