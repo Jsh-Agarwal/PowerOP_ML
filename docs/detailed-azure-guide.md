@@ -74,51 +74,185 @@ az --version
 ## 4. Setting Up GitHub Actions
 
 ### Step 1: Generate Azure Credentials
+Open Azure Cloud Shell (browser-based terminal) or Windows PowerShell/Command Prompt with Azure CLI installed:
+
+**Option 1: Azure Cloud Shell (Recommended for beginners)**
+1. Go to [Azure Portal](https://portal.azure.com)
+2. Click on the Cloud Shell icon (>_) in the top menu bar
+3. Select PowerShell or Bash (either will work)
+4. Run the following command (all in one line):
 ```bash
-# Run in terminal
-az ad sp create-for-rbac --name "powerop-ml-app" --role contributor \
-    --scopes /subscriptions/<subscription-id>/resourceGroups/<resource-group-name> \
-    --sdk-auth
+az ad sp create-for-rbac --name "powerop-ml-app" --role contributor --scopes /subscriptions/a5b55387-1733-4297-aaea-9dafbfcab6ed/resourceGroups/powerop-ml-rg --sdk-auth
 ```
 
+**Option 2: Local Windows PowerShell**
+1. Press Win + X and select "Windows PowerShell" or "Windows PowerShell (Admin)"
+2. Ensure Azure CLI is installed by running `az --version`
+3. Run `az login` first if you haven't logged in
+4. Then run the same command as above
+
+Note: The command above uses your specific subscription ID. Make sure you're in the correct subscription before running the command.
+
 ### Step 2: Add Secret to GitHub
-1. Go to your GitHub repository
-2. Click Settings → Secrets → New secret
-3. Name: AZURE_CREDENTIALS
-4. Value: (Paste the JSON output from previous command)
+1. Copy the entire JSON output from the previous command, which looks like:
+   ```json
+   {
+     "clientId": "...",
+     "clientSecret": "...",
+     "subscriptionId": "...",
+     "tenantId": "...",
+     ...
+   }
+   ```
+2. Go to your GitHub repository
+3. Click Settings → Secrets and variables → Actions
+4. Click "New repository secret"
+5. Configure the secret:
+   - Name: `AZURE_CREDENTIALS`
+   - Secret: Paste the entire JSON output including the curly braces
+6. Click "Add secret"
+
+⚠️ Important: Keep this JSON secure and never share it or commit it to your repository.
 
 ## 5. Deploying Your Application
 
-### Using Visual Studio Code
-1. Install Azure Extensions:
-   - Azure Tools
+### Method 1: Using Azure Portal (Recommended)
+1. Go to [Azure Portal](https://portal.azure.com)
+2. Click "Create a resource"
+3. Search for "Web App"
+4. Fill in the basics:
+   ```
+   Resource Group: powerop-ml-rg
+   Name: powerop-ml-app
+   Publish: Code
+   Runtime stack: Python 3.9
+   Operating System: Linux
+   Region: East US
+   Linux Plan: Create new
+   Sku and size: F1 (Free)
+   ```
+5. Click "Review + create" then "Create"
+6. Once created, go to your web app
+7. Go to Configuration → General settings
+8. Set the following:
+   ```
+   Startup Command: gunicorn --bind=0.0.0.0 --timeout 600 api.main:app
+   ```
+   Note: We changed `app:app` to `api.main:app` to match your application structure
+
+9. Go to Configuration → Application settings
+   Add these settings:
+   ```
+   Name: SCM_DO_BUILD_DURING_DEPLOYMENT
+   Value: true
+   
+   Name: PYTHON_VERSION
+   Value: 3.9
+   ```
+
+10. Make sure you have these files in your project:
+    - requirements.txt:
+    ```
+    fastapi
+    uvicorn
+    gunicorn
+    ```
+    - .deployment (new file):
+    ```
+    [config]
+    SCM_DO_BUILD_DURING_DEPLOYMENT=1
+    ```
+
+### Method 2: Using VS Code (Alternative)
+1. Install required extensions:
+   - Azure Account
    - Azure App Service
-   - Azure Machine Learning
 
-2. Deploy from VS Code:
-   ```
-   1. Open Command Palette (Ctrl+Shift+P)
-   2. Type: Azure: Sign In
-   3. Select your subscription
-   4. Right-click on your project
-   5. Select "Deploy to Web App"
-   ```
+2. Sign in to Azure:
+   - Press Ctrl+Shift+P
+   - Type "Azure: Sign In"
+   - Complete browser authentication
 
-### Using Command Line
+3. Open your project:
+   - File → Open Folder
+   - Select your project folder
+   - Make sure you're in the root directory where your code is
+
+4. Detailed deployment steps:
+   a. In VS Code's Explorer (Ctrl+Shift+E):
+      - Expand your project folder
+      - Right-click on the folder containing your web app files
+      - Look for "Deploy to Web App..." in the context menu
+      ![Right-click menu](https://i.imgur.com/example1.png)
+
+   b. If you don't see "Deploy to Web App...":
+      - Press Ctrl+Shift+P
+      - Type "Azure App Service: Deploy to Web App"
+      - Press Enter
+
+   c. Follow the prompts in this order:
+      1. "Create new Web App"
+      2. Enter a globally unique name (e.g., "powerop-ml-app")
+      3. Select your subscription ("Azure for Students")
+      4. Select "Python 3.9" as runtime stack
+      5. Select "Linux" as operating system
+      6. Select "Free F1" pricing tier
+      7. Choose the same region as your resource group (East US)
+      8. Wait for creation (about 2-3 minutes)
+      9. When prompted about deployment, select "Deploy"
+      10. When asked about build, select "Yes"
+
+5. Monitor deployment:
+   - Watch the bottom right notifications
+   - Check Output panel (Ctrl+Shift+U) for deployment logs
+   - Wait for "Deployment completed" message
+
+6. Once deployed:
+   - Click "Browse Website" in the success notification
+   - Or find your app URL in the Azure Portal under your web app resource
+
+### FastAPI-Specific Troubleshooting
+- If app fails to start:
+  1. Check Application Logs in Azure Portal
+  2. Verify your entry point matches the startup command
+  3. Make sure all dependencies are in requirements.txt
+  
+- If you get 500 errors:
+  1. Check if gunicorn is in requirements.txt
+  2. Verify your app variable name matches startup command
+  3. Try adding these to requirements.txt:
+     ```
+     python-multipart
+     python-dotenv
+     ```
+
+- If deployment fails:
+  1. Check if .deployment file exists
+  2. Verify Python version matches your local version
+  3. Make sure requirements.txt is in root directory
+
+### Troubleshooting VS Code Deployment
+- If right-click doesn't show deployment options:
+  1. Command Palette (Ctrl+Shift+P)
+  2. Type "Azure App Service: Create New Web App"
+  3. Follow the same steps as above
+
+- If you can't find Azure menu:
+  1. View → Command Palette
+  2. Type "Azure: Sign In" first
+  3. Then type "Azure: Show Azure Menu"
+  4. Look for Azure icon in the Activity Bar (left side)
+
+- If deployment fails:
+  1. Check the Output panel
+  2. Select "Azure App Service" from the dropdown
+  3. Look for specific error messages
+
+### Troubleshooting
+If you see "No subscription":
 ```bash
-# Deploy web app
-az webapp up --sku F1 --name powerop-ml-app --resource-group powerop-ml-rg
-
-# Deploy ML workspace
-az ml workspace create --name powerop-ml-workspace \
-    --resource-group powerop-ml-rg
-
-# Create compute instance
-az ml compute create --name dev-instance \
-    --workspace-name powerop-ml-workspace \
-    --resource-group powerop-ml-rg \
-    --size STANDARD_DS11_V2 \
-    --type AmlCompute
+az login
+az account set --subscription "a5b55387-1733-4297-aaea-9dafbfcab6ed"
 ```
 
 ## 6. Monitoring Your Resources
