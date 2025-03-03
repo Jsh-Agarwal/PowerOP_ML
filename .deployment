@@ -1,4 +1,0 @@
-[config]
-SCM_DO_BUILD_DURING_DEPLOYMENT=1
-POST_BUILD_COMMAND=pip install -r requirements.txt
-PYTHON_VERSION=3.9
