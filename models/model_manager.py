@@ -6,9 +6,12 @@ import json
 from typing import Dict, Any, Optional
 from .lstm_model import LSTMModel
 from utils.exceptions import ModelError
+import logging
+
+logger = logging.getLogger(__name__)
 
 class ModelManager:
-    """Manages model persistence and loading."""
+    """Manages ML models for temperature prediction and optimization."""
     
     def __init__(self):
         """Initialize model manager."""
@@ -22,6 +25,25 @@ class ModelManager:
         # Model metadata
         self.metadata_file = self.models_dir / "model_metadata.json"
         self.metadata = self._load_metadata()
+        self.models = {}
+    
+    async def get_model(self, model_name: str):
+        """Get or load a model by name."""
+        if model_name not in self.models:
+            # Load model
+            self.models[model_name] = await self._load_model(model_name)
+        return self.models[model_name]
+        
+    async def _load_model(self, model_name: str):
+        """Load a model from storage."""
+        # Placeholder for model loading logic
+        return {}
+
+    async def predict(self, model_name: str, features: dict):
+        """Make predictions using specified model."""
+        model = await self.get_model(model_name)
+        # Placeholder for prediction logic
+        return {"prediction": 0.0, "confidence": 0.95}
     
     def _load_metadata(self) -> Dict[str, Any]:
         """Load model metadata from file."""
@@ -119,3 +141,25 @@ class ModelManager:
             
         except Exception as e:
             raise ModelError(f"Failed to load LSTM model: {str(e)}")
+    
+    async def train_model(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """Train a model with given configuration."""
+        try:
+            if not config.get("features"):
+                features = {
+                    "temperature": [23.5, 24.0, 24.5],
+                    "humidity": [50.0, 51.0, 52.0],
+                    "time_of_day": [8, 9, 10]
+                }
+                config["features"] = features
+
+            # Mock training result
+            return {
+                "model_id": "lstm_001",
+                "accuracy": 0.95,
+                "training_time": "00:05:23",
+                "epochs": 100
+            }
+        except Exception as e:
+            logger.error(f"Training failed: {str(e)}")
+            raise

@@ -1,46 +1,83 @@
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 from typing import List, Dict, Optional, Union, Any
 from datetime import datetime
 from uuid import UUID
 
-class TemperaturePredictionRequest(BaseModel):
-    device_id: str = Field(..., description="Device ID")
-    zone_id: str = Field(..., description="Zone ID")
-    timestamps: Optional[List[datetime]] = Field(None, description="Timestamps for prediction")
-    features: Dict[str, Any] = Field(..., description="Feature values")
-    context: Optional[Dict[str, Any]] = Field(None, description="Additional context")
+class FeatureDict(BaseModel):
+    temperature: float
+    humidity: float
+    time_of_day: float
 
-    @validator('features')
-    def validate_features(cls, features):
-        required_features = {'temperature', 'humidity', 'power'}
-        if not all(f in features for f in required_features):
-            raise ValueError(f"Missing required features. Expected: {required_features}")
-        return features
+class TemperaturePredictionRequest(BaseModel):
+    device_id: str = Field(..., description="Device identifier")
+    zone_id: str = Field(..., description="Zone identifier")
+    features: Dict[str, float] = Field(..., description="Feature values")
+    current_temp: float = Field(..., description="Current temperature")
+    target_temp: float = Field(..., description="Target temperature")
+    external_temp: Optional[float] = None
+    system_id: Optional[str] = None
+
+    @field_validator('features')
+    def validate_features(cls, v):
+        required = {'temperature', 'humidity', 'time_of_day'}
+        missing = required - v.keys()
+        if missing:
+            raise ValueError(f'Missing required features: {missing}')
+        return v
 
 class TemperaturePredictionResponse(BaseModel):
-    predictions: List[float] = Field(..., description="Predicted temperatures")
-    timestamps: List[datetime] = Field(..., description="Prediction timestamps")
-    confidence: Optional[float] = Field(None, description="Confidence score")
-    min_values: Optional[List[float]] = Field(None, description="Minimum predicted values")
-    max_values: Optional[List[float]] = Field(None, description="Maximum predicted values")
+    predictions: List[float]
+    timestamps: List[datetime]
+    confidence: Optional[float] = None
+
+class BatchPredictionItem(BaseModel):
+    device_id: str
+    zone_id: str
+    features: Dict[str, float]
+    timestamps: Optional[List[datetime]] = None
+
+    @field_validator('features')
+    def validate_features(cls, v):
+        required = {'temperature', 'humidity', 'time_of_day'}
+        missing = required - v.keys()
+        if missing:
+            raise ValueError(f'Missing required features: {missing}')
+        return v
 
 class BatchPredictionRequest(BaseModel):
-    requests: List[TemperaturePredictionRequest]
+    predictions: List[TemperaturePredictionRequest] = Field(..., description="List of prediction requests")
 
-    @validator('requests')
+    @field_validator('predictions')
     def validate_batch(cls, v):
         if not v:
-            raise ValueError("Batch must contain at least one request")
+            raise ValueError("Batch must contain at least one prediction request")
         if len(v) > 100:  # Add reasonable limit
             raise ValueError("Batch size exceeds maximum limit of 100")
         return v
 
 class OptimizationRequest(BaseModel):
-    system_id: str = Field(..., description="System ID")
-    target_metric: str = Field(..., description="Optimization target metric")
-    constraints: Optional[Dict[str, Any]] = Field(None, description="Optimization constraints")
+    system_id: str = Field(..., description="System identifier")
+    target_metric: str = Field(..., description="Optimization target metric", 
+                             pattern="^(energy|comfort|cost|efficiency)$")
     current_state: Dict[str, Any] = Field(..., description="Current system state")
-    objectives: Optional[List[str]] = Field(None, description="Optimization objectives")
+    constraints: Optional[Dict[str, Any]] = None
+
+    @field_validator('current_state')
+    def validate_current_state(cls, v):
+        required = {'temperature', 'humidity', 'power'}
+        if not isinstance(v, dict):
+            raise ValueError('current_state must be a dictionary')
+        missing = required - set(v.keys())
+        if missing:
+            raise ValueError(f'Missing required state parameters: {missing}')
+        return v
+
+    @field_validator('target_metric')
+    def validate_target_metric(cls, v):
+        allowed = {'energy', 'comfort', 'cost', 'efficiency'}
+        if v not in allowed:
+            raise ValueError(f'target_metric must be one of {allowed}')
+        return v
 
 class ScheduleRequest(BaseModel):
     system_id: str
@@ -68,24 +105,28 @@ class ScheduleOptimizationRequest(BaseModel):
         description="Optimization constraints"
     )
 
-    @validator('target_metric')
+    @field_validator('target_metric')
     def validate_target_metric(cls, v):
         allowed = {'energy', 'comfort', 'cost', 'efficiency'}
         if v not in allowed:
             raise ValueError(f'target_metric must be one of {allowed}')
         return v
 
-    @validator('current_state')
-    def validate_state(cls, v):
+    @field_validator('current_state')
+    def validate_state(cls, v, info):
+        if not isinstance(v, dict):
+            raise ValueError('current_state must be a dictionary')
+            
         required = {'temperature', 'humidity', 'power'}
         missing = required - v.keys()
         if missing:
             raise ValueError(f'Missing required state parameters: {missing}')
         return v
 
-    @validator('end_time')
-    def validate_time_range(cls, v, values):
-        if 'start_time' in values and v <= values['start_time']:
+    @field_validator('end_time')
+    def validate_time_range(cls, v, info):
+        data = info.data
+        if 'start_time' in data and v <= data['start_time']:
             raise ValueError('end_time must be after start_time')
         return v
 
@@ -126,7 +167,7 @@ class HealthResponse(BaseModel):
     timestamp: str = Field(..., description="Timestamp")
 
 class AnomalyDetectionRequest(BaseModel):
-    system_id: str = Field(..., description="System identifier")
+    system_id: str
     data: List[Dict[str, Any]] = Field(..., description="Time series data points")
     threshold: float = Field(
         default=0.95,
@@ -135,8 +176,8 @@ class AnomalyDetectionRequest(BaseModel):
         description="Anomaly detection threshold"
     )
 
-    class Config:
-        schema_extra = {
+    model_config = {
+        'json_schema_extra': {
             "example": {
                 "system_id": "test_system",
                 "data": [{
@@ -149,6 +190,7 @@ class AnomalyDetectionRequest(BaseModel):
                 "threshold": 0.95
             }
         }
+    }
 
 class AnomalyDetectionResponse(BaseModel):
     system_id: str
@@ -164,20 +206,51 @@ class CostAnalysisRequest(BaseModel):
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
 
-class LLMAnalysisRequest(BaseModel):
-    system_id: str
-    query: str
-    context: Dict[str, Any]
-
-    class Config:
-        schema_extra = {
-            "example": {
-                "system_id": "test_system",
-                "query": "Analyze system efficiency",
-                "context": {
-                    "temperature": 23.5,
-                    "power": 1000.0,
-                    "runtime_hours": 24
+class LLMAnalysisContext(BaseModel):
+    """Context data for LLM analysis."""
+    temperature: Optional[float] = Field(None, description="Current temperature")
+    power: Optional[float] = Field(None, description="Current power consumption")
+    runtime_hours: Optional[int] = Field(None, description="Runtime hours")
+    
+    model_config = {
+        'json_schema_extra': {
+            'examples': [
+                {
+                    'temperature': 23.5,
+                    'power': 1000.0,
+                    'runtime_hours': 24
                 }
-            }
+            ]
         }
+    }
+
+class LLMAnalysisRequest(BaseModel):
+    """Request model for LLM analysis."""
+    query: str = Field(..., description="Analysis query")
+    context: LLMAnalysisContext
+
+    model_config = {
+        'json_schema_extra': {
+            'examples': [
+                {
+                    'query': "Analyze system efficiency",
+                    'context': {
+                        'temperature': 23.5,
+                        'power': 1000.0,
+                        'runtime_hours': 24
+                    }
+                }
+            ]
+        }
+    }
+
+class LLMAnalysisResponse(BaseModel):
+    """Response model for LLM analysis."""
+    status: str = Field(..., description="Analysis status")
+    data: Dict[str, Any] = Field(..., description="Analysis results")
+
+class ControlRequest(BaseModel):
+    system_id: str = Field(..., description="System identifier")
+    temperature: Optional[float] = Field(None, description="Temperature setpoint")
+    mode: Optional[str] = Field(None, description="Operation mode")
+    state: Optional[bool] = Field(None, description="Power state")

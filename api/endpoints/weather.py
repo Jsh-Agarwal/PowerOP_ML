@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/weather",
-    tags=["Weather Data"]
+    tags=["Weather"]
 )
 
 @router.get("/current")
@@ -22,19 +22,15 @@ async def get_current_weather(
     location: str = Query(..., description="Location to get weather for"),
     token: str = Depends(oauth2_scheme)
 ):
-    """Get current weather data."""
+    """Get current weather data for a location."""
     try:
         await validate_token(token)
-        weather = WeatherService()
-        await weather.connect()
-        data = await weather.get_current_weather(location)
-        return JSONResponse(
-            status_code=200,
-            content={
-                "status": "success",
-                "data": data
-            }
-        )
+        weather_service = WeatherService()
+        data = await weather_service.get_current_weather(location)
+        return {
+            "location": location,
+            "current_conditions": data
+        }
     except Exception as e:
         raise handle_api_error(e, "get_current_weather")
 
@@ -44,18 +40,15 @@ async def get_weather_forecast(
     days: Optional[int] = Query(5, description="Number of days to forecast"),
     token: str = Depends(oauth2_scheme)
 ):
-    """Get weather forecast."""
+    """Get weather forecast for a location."""
     try:
         await validate_token(token)
-        weather = WeatherService()
-        await weather.connect()
-        data = await weather.get_forecast(location, days)
-        
-        # Use custom encoder for datetime objects
-        return JSONResponse(
-            content=json.loads(
-                json.dumps(data, cls=DateTimeEncoder)
-            )
-        )
+        weather_service = WeatherService()
+        forecast = await weather_service.get_forecast(location, days)
+        return {
+            "location": location,
+            "forecast_days": days,
+            "forecast": forecast
+        }
     except Exception as e:
         raise handle_api_error(e, "get_weather_forecast")

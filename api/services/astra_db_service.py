@@ -208,3 +208,40 @@ class AstraDBService:
                 detail=f"Failed to get metrics: {str(e)}",
                 error_code="METRICS_ERROR"
             )
+
+    async def store_command(self, command: Dict[str, Any]) -> bool:
+        """
+        Store a control command in the database
+        """
+        try:
+            command_data = {
+                "command_id": str(uuid.uuid4()),
+                "timestamp": datetime.utcnow().isoformat(),
+                "system_id": command["system_id"],
+                "command_type": command["type"],
+                "parameters": command["parameters"],
+                "status": "pending"
+            }
+            
+            query = """
+            INSERT INTO hvac.commands 
+            (command_id, timestamp, system_id, command_type, parameters, status)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """
+            
+            await self.session.execute(
+                query,
+                [
+                    command_data["command_id"],
+                    command_data["timestamp"],
+                    command_data["system_id"],
+                    command_data["command_type"],
+                    json.dumps(command_data["parameters"]),
+                    command_data["status"]
+                ]
+            )
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to store command: {str(e)}")
+            raise Exception(f"Database error: {str(e)}")

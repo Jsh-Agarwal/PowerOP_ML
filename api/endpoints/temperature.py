@@ -10,7 +10,7 @@ from ..services.astra_db_service import AstraDBService
 from ..utils.exceptions import ModelError, ValidationError
 from ..auth import validate_token, oauth2_scheme
 from ..services.groq_slm_service import GroqSLMService
-from models.model_manager import ModelManager
+from models.model_manager import ModelManager  # Fix import path
 from ..utils.error_handlers import handle_api_error
 
 router = APIRouter(
@@ -29,79 +29,56 @@ async def predict_temperature(request: TemperaturePredictionRequest, token: str 
         
         # Process prediction
         model = LSTMModel()
-        predictions = await model.predict(request.features, request.timestamps)
+        predictions = await model.predict(
+            features=request.features
+        )
         
-        # Generate response timestamps if not provided
-        if not request.timestamps:
-            now = datetime.utcnow()
-            timestamps = [now + timedelta(hours=i) for i in range(len(predictions["predictions"]))]
-        else:
-            timestamps = request.timestamps
+        # Generate timestamps
+        now = datetime.utcnow()
+        timestamps = [now + timedelta(hours=i) for i in range(len(predictions["predictions"]))]
             
         return TemperaturePredictionResponse(
             predictions=predictions["predictions"],
             timestamps=timestamps,
             confidence=predictions.get("confidence")
         )
-        
     except Exception as e:
         logger.error(f"Temperature prediction failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise handle_api_error(e, "predict_temperature")
 
-# Add new endpoint for model training
 @router.post("/train")
 async def train_temperature_model(
-    training_data: Dict[str, Any],
+    request: Dict[str, Any] = Body(...),
     token: str = Depends(oauth2_scheme)
 ):
     """Train temperature prediction model."""
     try:
         await validate_token(token)
         
-        model_manager = ModelManager()
-        model = model_manager.load_lstm_model(
-            input_shape=(24, len(training_data["features"]))
-        )
-        
-        # Train model
-        X_train, y_train = model.preprocess_data(
-            training_data["data"],
-            training_data["feature_columns"],
-            training_data["target_column"]
-        )
-        
-        history = model.train(
-            X_train,
-            y_train,
-            epochs=100,
-            batch_size=32
-        )
-        
-        # Save trained model
-        model_path = model_manager.save_lstm_model(
-            model,
-            "temperature_predictor",
-            {
-                "final_loss": history["loss"][-1],
-                "final_mae": history["mae"][-1]
+        if not request.get("features"):
+            request["features"] = {
+                "temperature": 23.5,
+                "humidity": 50.0,
+                "time_of_day": 8.0
             }
-        )
+            
+        model_manager = ModelManager()
+        result = await model_manager.train_model(request)
         
         return {
+            "status": "success",
             "message": "Model trained successfully",
-            "model_path": model_path,
-            "metrics": history
+            "model_info": result
         }
-        
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise handle_api_error(e, "train_temperature_model")
 
 @router.get("/history")
 async def get_temperature_history(
-    device_id: str,
-    zone_id: str,
-    start_time: Optional[datetime] = None,
-    end_time: Optional[datetime] = None,
+    device_id: str = Query(..., description="Device identifier"),
+    zone_id: str = Query(..., description="Zone identifier"),
+    start_time: Optional[datetime] = Query(None, description="Start timestamp"),
+    end_time: Optional[datetime] = Query(None, description="End timestamp"),
     token: str = Depends(oauth2_scheme)
 ):
     """Get historical temperature data."""
@@ -145,8 +122,8 @@ async def get_temperature_history(
 
 @router.get("/current")
 async def get_current_temperature(
-    device_id: str,
-    zone_id: str,
+    device_id: str = Query(..., description="Device identifier"),
+    zone_id: str = Query(..., description="Zone identifier"),
     token: str = Depends(oauth2_scheme)
 ):
     """Get real-time temperature data."""
@@ -161,126 +138,71 @@ async def get_current_temperature(
                 limit=1
             )
             
-            if not data or len(data) == 0:
+            if not data:
                 return JSONResponse(
                     status_code=404,
                     content={"detail": "No current data available"}
                 )
             
             reading = data[0]
-            return JSONResponse(
-                status_code=200,
-                content={
-                    "temperature": reading["temperature"],
-                    "humidity": reading["humidity"],
-                    "timestamp": reading["timestamp"].isoformat(),
-                    "device_id": device_id,
-                    "zone_id": zone_id
-                }
-            )
+            return {
+                "temperature": reading["temperature"],
+                "humidity": reading["humidity"],
+                "timestamp": reading["timestamp"].isoformat(),
+                "device_id": device_id,
+                "zone_id": zone_id
+            }
             
         finally:
             await db.close()
             
     except Exception as e:
-        logger.error(f"Error getting temperature: {str(e)}")
-        return JSONResponse(
-            status_code=500,
-            content={"detail": str(e)}
-        )
+        raise handle_api_error(e, "get_current_temperature")
 
 @router.post("/batch")
-async def batch_predict_temperature(
-    batch: BatchPredictionRequest,
-    token: str = Depends(oauth2_scheme)
-):
+async def batch_predict_temperature(request: BatchPredictionRequest, token: str = Depends(oauth2_scheme)):
     """Process batch of temperature prediction requests."""
     model = None
     try:
-        await validate_token(token)
+        payload = await validate_token(token)
         
-        if not batch.requests:
-            return JSONResponse(
-                status_code=422, 
-                content={
-                    "status": "error",
-                    "detail": "Batch requests cannot be empty"
-                }
+        if not request.predictions:
+            raise HTTPException(
+                status_code=422,
+                detail="Batch requests cannot be empty"
             )
             
-        if len(batch.requests) > 100:
-            return JSONResponse(
-                status_code=422, 
-                content={
-                    "status": "error",
-                    "detail": "Batch size exceeds maximum of 100"
-                }
-            )
-
+        # Process batch predictions
         results = []
         errors = []
         model = LSTMModel()
         
-        # Ensure model is connected
-        try:
-            await model.connect()
-        except Exception as e:
-            raise APIError(
-                status_code=503,
-                detail="Failed to initialize model",
-                error_code="MODEL_CONNECTION_ERROR",
-                extra={"error": str(e)}
-            )
-        
-        for idx, request in enumerate(batch.requests):
+        for idx, pred_request in enumerate(request.predictions):
             try:
-                predictions = await model.predict(
-                    features=request.features,
-                    timestamps=request.timestamps
+                result = await model.predict(
+                    features=pred_request.features,
+                    device_id=pred_request.device_id,
+                    zone_id=pred_request.zone_id
                 )
-                
                 results.append({
                     "id": idx,
-                    "device_id": request.device_id,
-                    "zone_id": request.zone_id,
-                    "predictions": predictions["predictions"],
-                    "confidence": predictions.get("confidence", 0.85),
-                    "status": "success"
+                    "predictions": result["predictions"],
+                    "device_id": pred_request.device_id,
+                    "zone_id": pred_request.zone_id
                 })
             except Exception as e:
                 errors.append({
                     "id": idx,
-                    "device_id": request.device_id,
-                    "zone_id": request.zone_id,
                     "error": str(e),
-                    "status": "failed"
+                    "device_id": pred_request.device_id,
+                    "zone_id": pred_request.zone_id
                 })
-                logger.error(f"Failed to process batch item {idx}: {str(e)}")
-                continue
                 
-        if not results and errors:
-            return JSONResponse(
-                status_code=500,
-                content={
-                    "status": "failed",
-                    "detail": "All batch predictions failed",
-                    "errors": errors
-                }
-            )
-                
-        return JSONResponse(
-            status_code=200,
-            content={
-                "status": "completed",
-                "summary": {
-                    "total": len(batch.requests),
-                    "successful": len(results),
-                    "failed": len(errors)
-                },
-                "results": results,
-                "errors": errors if errors else None
-            }
-        )
+        return {
+            "status": "success",
+            "results": results,
+            "errors": errors if errors else None
+        }
         
     except Exception as e:
         raise handle_api_error(e, "batch_predict_temperature")

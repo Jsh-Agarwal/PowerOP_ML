@@ -1,72 +1,55 @@
 import logging
-import logging.handlers
 from pathlib import Path
+from logging.handlers import RotatingFileHandler
 from datetime import datetime
-import json
 
-# Create logs directory
-LOGS_DIR = Path(__file__).parent.parent.parent / "logs"
-LOGS_DIR.mkdir(exist_ok=True)
+def setup_logging(console_level=logging.WARNING, file_level=logging.DEBUG):
+    """Configure logging with minimal console output and detailed file logs."""
+    # Create logs directory if it doesn't exist
+    log_dir = Path(__file__).parent.parent.parent / "logs"
+    log_dir.mkdir(exist_ok=True)
 
-class RequestResponseFormatter(logging.Formatter):
-    def format(self, record):
-        if hasattr(record, 'request') or hasattr(record, 'response'):
-            # Format request/response logs with extra detail
-            log_data = {
-                'timestamp': self.formatTime(record),
-                'level': record.levelname,
-                'message': record.getMessage()
-            }
-            
-            if hasattr(record, 'request'):
-                log_data['request'] = record.request
-            if hasattr(record, 'response'):
-                log_data['response'] = record.response
-                
-            return json.dumps(log_data)
-        return super().format(record)
+    # Create a timestamp-based log file name
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_file = log_dir / f"api_test_{timestamp}.log"
 
-def setup_logging():
-    """Configure logging with file and console handlers."""
     # Create formatters
-    detailed_formatter = RequestResponseFormatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    file_formatter = logging.Formatter(
+        '%(asctime)s [%(levelname)s] %(name)s - %(message)s\n'
+        '%(data)s' if '%(data)s' else '',
+        datefmt='%Y-%m-%d %H:%M:%S'
     )
+    
     console_formatter = logging.Formatter(
-        '%(levelname)s: %(message)s'
+        '%(message)s'  # Simplified console output
     )
 
-    # File handler for detailed logs
-    today = datetime.now().strftime('%Y%m%d')
-    detailed_handler = logging.handlers.RotatingFileHandler(
-        LOGS_DIR / f'detailed_{today}.log',
-        maxBytes=10*1024*1024,  # 10MB
+    # File handler with custom filter
+    class ExtraFilter(logging.Filter):
+        def filter(self, record):
+            if not hasattr(record, 'data'):
+                record.data = ''
+            return True
+
+    file_handler = RotatingFileHandler(
+        log_file,
+        maxBytes=10*1024*1024,
         backupCount=5
     )
-    detailed_handler.setFormatter(detailed_formatter)
-    detailed_handler.setLevel(logging.DEBUG)
+    file_handler.setLevel(file_level)
+    file_handler.setFormatter(file_formatter)
+    file_handler.addFilter(ExtraFilter())
 
-    # File handler for request/response logs
-    api_handler = logging.handlers.RotatingFileHandler(
-        LOGS_DIR / f'requests_{today}.log',
-        maxBytes=10*1024*1024,  # 10MB
-        backupCount=5
-    )
-    api_handler.setFormatter(detailed_formatter)
-    api_handler.setLevel(logging.INFO)
-
-    # Console handler
+    # Console handler for minimal output
     console_handler = logging.StreamHandler()
+    console_handler.setLevel(console_level)
     console_handler.setFormatter(console_formatter)
-    console_handler.setLevel(logging.INFO)
 
     # Configure root logger
     root_logger = logging.getLogger()
-    root_logger.setLevel(logging.DEBUG)
-    root_logger.addHandler(detailed_handler)
+    root_logger.setLevel(min(console_level, file_level))
+    root_logger.handlers = []
+    root_logger.addHandler(file_handler)
     root_logger.addHandler(console_handler)
 
-    # Configure API logger
-    api_logger = logging.getLogger('api')
-    api_logger.setLevel(logging.DEBUG)
-    api_logger.addHandler(api_handler)
+    return log_file

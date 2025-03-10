@@ -10,6 +10,8 @@ import logging
 from fastapi.responses import JSONResponse
 import traceback
 import asyncio
+from contextlib import AsyncExitStack
+from typing import Callable
 
 # Import auth module
 from .auth import create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES, oauth2_scheme
@@ -131,10 +133,16 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.middleware("http")
-async def timeout_middleware(request: Request, call_next):
+async def timeout_middleware(request: Request, call_next: Callable):
     try:
-        async with asyncio.timeout(30):  # 30 second timeout
-            return await call_next(request)
+        async with AsyncExitStack() as stack:
+            if hasattr(asyncio, 'timeout'):
+                await stack.enter_async_context(asyncio.timeout(30))
+            else:
+                # Fallback for Python < 3.11
+                await stack.enter_async_context(asyncio.TimeoutError(30))
+            response = await call_next(request)
+            return response
     except asyncio.TimeoutError:
         return JSONResponse(
             status_code=504,

@@ -7,8 +7,8 @@ from ..utils.error_handlers import APIError
 logger = logging.getLogger(__name__)
 
 class SystemController:
-    def __init__(self):
-        self.db = AstraDBService()
+    def __init__(self, db_service: AstraDBService):
+        self.db = db_service
         
     async def set_temperature(
         self,
@@ -29,9 +29,11 @@ class SystemController:
             # Record the command
             command = {
                 "system_id": system_id,
-                "type": "temperature",
-                "value": temperature,
-                "mode": mode,
+                "type": "temperature_control",
+                "parameters": {
+                    "temperature": temperature,
+                    "mode": mode
+                },
                 "timestamp": datetime.utcnow().isoformat()
             }
             
@@ -45,6 +47,7 @@ class SystemController:
             }
             
         except Exception as e:
+            logger.error(f"Temperature control failed: {str(e)}")
             raise APIError(
                 status_code=500,
                 detail=f"Failed to set temperature: {str(e)}",

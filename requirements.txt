@@ -7,15 +7,15 @@ pydantic
 gunicorn
 
 # Machine Learning
-tensorflow==2.15.0
-numpy==1.26.2
-pandas==2.1.3
-scikit-learn==1.3.2
+tensorflow-cpu
+numpy
+pandas
+scikit-learn
 joblib
 
 # Database
 cassandra-driver
-aiohttp==3.9.1
+aiohttp
 python-dotenv
 
 # API Rate Limiting
@@ -36,33 +36,38 @@ asyncio
 
 # Data Processing
 scipy
-plotly==5.18.0
+plotly
 PyYAML
-matplotlib==3.8.2
-seaborn==0.13.0
+matplotlib
+seaborn
 
 # Security
-python-jose==3.3.0
+python-jose
 passlib[bcrypt]
 python-multipart
-PyJWT  # Add this line for JWT support
+PyJWT
 
 # Monitoring and Logging
 prometheus-client
 python-json-logger
 
 # Development Tools
-black  # Code formatting
-isort  # Import sorting
-flake8  # Linting
-mypy   # Type checking
+black
+isort
+flake8
+mypy
 
 # Documentation
 mkdocs
 mkdocs-material
 
 tenacity
-
 astrapy
-
 backoff
+
+# Additional Dependencies
+groq
+requests
+
+# Async support
+async-timeout; python_version < '3.11'
